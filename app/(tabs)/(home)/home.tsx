@@ -11,6 +11,7 @@ import {
   Pressable,
   Modal,
   Button,
+  Image,
 } from "react-native";
 import axios from "axios";
 import dayjs from "dayjs";
@@ -18,7 +19,6 @@ import { useFocusEffect, useRouter } from "expo-router";
 import TodoAddButtons from "@/app/components/TodoAddButtons";
 import TodoEditButtons from "@/app/components/TodoEditButtons";
 import TodoDeleteButtons from "@/app/components/TodoDeleteButtons";
-
 interface Todo {
   id: number;
   contents: string;
@@ -37,25 +37,51 @@ const TodoApp = () => {
   const [modalInput, setModalInput] = useState("");
   const inputRef = useRef<TextInput>(null);
 
-  const fetchTodos = () => {
-    axios
-      .get<Todo[]>("http://192.168.219.60:8080/api/todos")
-      .then((response) => setTodos(response.data))
-      .catch((error) => console.error("Error fetching todos:", error));
-  };
+  const [size, setSize] = useState(10); // 초기 크기 설정
+  const [loading, setLoading] = useState(false); // 로딩 상태 관리
+  const [isLastPage, setIsLastPage] = useState(false); // 마지막 데이터 여부 확인
 
+  const fetchTodos = async (newSize: number) => {
+    setLoading(true); // 로딩 시작
+    try {
+      const response = await axios.get<{ content: Todo[]; last: boolean }>(
+        "http://192.168.219.60:8080/api/todos",
+        {
+          params: { page: 0, size: newSize }, //size만 변경
+        }
+      );
+      setTodos(response.data.content.sort((a, b) => b.id - a.id)); // 모든 데이터를 업데이트
+      setIsLastPage(response.data.last); // 마지막 페이지 여부 확인
+    } catch (error) {
+      console.error("오류 발생:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+  //초기 데이터 로드
   useFocusEffect(
     React.useCallback(() => {
-      fetchTodos();
+      fetchTodos(10);
     }, [])
   );
 
+  //  useEffect(() => {
+  //    axios
+  //      .get<Todo[]>("http://192.168.219.60:8080/api/todos")
+  //      .then((response) => setTodos(response.data))
+  //      .catch((error) => console.error("오류 발생:", error));
+  //  }, []);
+
+  // size가 변경될 때 마다 데이터를 로드
   useEffect(() => {
-    axios
-      .get<Todo[]>("http://192.168.219.60:8080/api/todos")
-      .then((response) => setTodos(response.data))
-      .catch((error) => console.error("오류 발생:", error));
-  }, []);
+    fetchTodos(size);
+  }, [size]);
+
+  // 데이터를 로드하기 위해 가져올 데이터가 남아있으면 size를 증가
+  const loadMoreTodos = () => {
+    if (isLastPage || loading) return;
+    setSize((prevSize) => prevSize + 10);
+  };
 
   //단일 수정(모달)
   const openEditModal = (todo: Todo) => {
@@ -80,9 +106,18 @@ const TodoApp = () => {
     }
 
     if (editingId) {
+      // 기존 todo에서 isCompleted 값을 가져옴
+      const existingTodo = todos.find((todo) => todo.id === editingId);
+      if (!existingTodo) {
+        Alert.alert("오류", "해당 할 일을 찾을 수 없습니다.");
+        return;
+      }
+
+      // 수정 요청 전송
       axios
         .put<Todo>(`http://192.168.219.60:8080/api/todos/${editingId}`, {
           contents: modalInput,
+          isCompleted: existingTodo.isCompleted, // 기존 isCompleted 값 전송
         })
         .then((response) => {
           setTodos((prevTodos) =>
@@ -90,7 +125,7 @@ const TodoApp = () => {
               todo.id === editingId ? response.data : todo
             )
           );
-          closeEditModal();
+          closeEditModal(); // 모달 닫기
         })
         .catch((error) => console.error("수정 오류 발생:", error));
     }
@@ -154,7 +189,7 @@ const TodoApp = () => {
       </View>
       {/* Display Todos */}
       <FlatList
-        data={[...todos].reverse()}
+        data={[...todos]}
         keyExtractor={(item) => item.id.toString()}
         renderItem={({ item }) => (
           <View style={styles.todoItem}>
@@ -185,6 +220,24 @@ const TodoApp = () => {
             <TodoDeleteButtons onDelete={() => handleDelete(item.id)} />
           </View>
         )}
+        ListFooterComponent={
+          !isLastPage ? (
+            <TouchableOpacity
+              style={styles.loadMoreButton}
+              onPress={loadMoreTodos}
+              disabled={loading} // 로딩 중 버튼 비활성화
+            >
+              <Image
+                source={
+                  loading
+                    ? require("../../../assets/images/loading.gif") // 로딩 중일 때
+                    : require("../../../assets/images/arrows.png") // 로딩 아닐 때
+                }
+                style={styles.loadMoreImage}
+              />
+            </TouchableOpacity>
+          ) : null // 조건 만족하지 않을 경우 null 반환
+        }
       />
       {/* Edit Modal */}
       <Modal
@@ -289,6 +342,15 @@ const styles = StyleSheet.create({
   modalButtonContainer: {
     flexDirection: "row",
     justifyContent: "space-between",
+  },
+  loadMoreButton: {
+    alignItems: "center",
+    marginVertical: 10,
+  },
+  loadMoreImage: {
+    width: 50,
+    height: 50,
+    resizeMode: "contain",
   },
 });
 
